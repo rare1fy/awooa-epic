@@ -1,0 +1,18 @@
+# Godot 4 gitignore
+.godot/
+
+# Export
+export/
+*.tmp
+*.log
+
+# OS
+.DS_Store
+Thumbs.db
+desktop.ini
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo

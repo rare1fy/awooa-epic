@@ -1,0 +1,36 @@
+; Engine configuration file.
+; It's best edited using the editor UI and not directly,
+; since the parameters that go here are not all obvious.
+;
+; Format:
+;   [section] ; section goes between []
+;   param=value ; assign values to parameters
+
+config_version=5
+
+[application]
+
+config/name="AwooaEpic"
+config/description="鱼人逆袭：潮涌军团 - Survivors-like 割草 + 角色收集养成"
+run/main_scene="res://scenes/main_menu/main_menu.tscn"
+config/features=PackedStringArray("4.5", "GL Compatibility")
+
+[autoload]
+
+GameManager="*res://common/autoload/game_manager.gd"
+SaveManager="*res://common/autoload/save_manager.gd"
+AudioManager="*res://common/autoload/audio_manager.gd"
+
+[display]
+
+window/size/viewport_width=480
+window/size/viewport_height=854
+window/stretch/mode="canvas_items"
+window/handheld/orientation=1
+
+[rendering]
+
+textures/canvas_textures/default_texture_filter=0
+renderer/rendering_method="gl_compatibility"
+renderer/rendering_method.mobile="gl_compatibility"
+environment/defaults/default_clear_color=Color(0.1, 0.12, 0.18, 1)
