@@ -2,7 +2,9 @@
 .godot/
 
 # Export
-export/
+export/*
+!export/web/
+export/web/*.import
 export_log*.txt
 *.tmp
 *.log
