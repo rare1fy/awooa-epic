@@ -45,6 +45,9 @@ func _setup_global_font() -> void:
 		# 设置为全局 Theme
 		if get_tree() and get_tree().root:
 			get_tree().root.theme = theme
+		# 设置 ThemeDB fallback（确保动态创建的控件也能用）
+		ThemeDB.fallback_font = _pixel_font
+		ThemeDB.fallback_font_size = 12
 	else:
 		push_warning("Failed to load zpix.ttf font")
 

@@ -658,6 +658,13 @@ func _show_recruit_panel() -> void:
 	panel.set_anchors_preset(Control.PRESET_FULL_RECT)
 	panel.color = Color(0, 0, 0, 0.6)
 	panel.process_mode = Node.PROCESS_MODE_ALWAYS
+	# 显式设置字体
+	var font := load("res://assets/fonts/zpix.ttf") as Font
+	if font:
+		var panel_theme := Theme.new()
+		panel_theme.default_font = font
+		panel_theme.default_font_size = 12
+		panel.theme = panel_theme
 	ui_layer.add_child(panel)
 
 	var title := Label.new()
@@ -913,6 +920,13 @@ func _setup_hud() -> void:
 	hud.name = "HUD"
 	hud.set_anchors_preset(Control.PRESET_FULL_RECT)
 	hud.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	# 显式设置字体 theme，确保 Web 上不乱码
+	var font := load("res://assets/fonts/zpix.ttf") as Font
+	if font:
+		var hud_theme := Theme.new()
+		hud_theme.default_font = font
+		hud_theme.default_font_size = 12
+		hud.theme = hud_theme
 	ui_layer.add_child(hud)
 
 	var hp_bg := ColorRect.new()

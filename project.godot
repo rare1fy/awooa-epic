@@ -30,7 +30,8 @@ window/handheld/orientation=1
 
 [gui]
 
-theme/custom_font="res://assets/fonts/zpix.ttf"
+theme/custom="res://assets/fonts/default_theme.tres"
+theme/default_font_size=12
 
 [rendering]
 
