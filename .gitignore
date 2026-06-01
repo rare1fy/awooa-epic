@@ -3,6 +3,7 @@
 
 # Export
 export/
+export_log*.txt
 *.tmp
 *.log
 
