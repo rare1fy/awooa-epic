@@ -36,16 +36,13 @@ var _flash_timer: float = 0.0
 var _invincible_timer: float = 0.0
 const INVINCIBLE_DURATION: float = 0.15
 
-@onready var sprite: Sprite2D = $Sprite
+## 当前朝向（用于动画）
+var _facing: String = "south"
+
+@onready var sprite: AnimatedSprite2D = $Sprite
 
 
 func _ready() -> void:
-	# 占位纹理：蓝色圆形带白边
-	if sprite and not sprite.texture:
-		sprite.texture = PlaceholderTexture.outlined_circle(16, Color(0.2, 0.5, 1.0), Color.WHITE)
-		sprite.scale = Vector2(1.0, 1.0)
-		sprite.modulate = Color.WHITE
-
 	if character_data:
 		max_hp = character_data.base_hp
 		current_hp = max_hp
@@ -61,6 +58,9 @@ func _physics_process(delta: float) -> void:
 	# 移动
 	velocity = input_direction * speed
 	move_and_slide()
+
+	# 动画方向切换
+	_update_animation()
 
 	# 自动攻击
 	_attack_cooldown -= delta
@@ -177,6 +177,42 @@ func _trigger_ultimate() -> void:
 	tween.tween_property(sprite, "scale", Vector2(1.0, 1.0), 0.3).set_ease(Tween.EASE_OUT)
 	tween.parallel().tween_property(sprite, "modulate", Color.WHITE, 0.3)
 	tween.tween_callback(func() -> void: _ultimate_active = false)
+
+
+func _update_animation() -> void:
+	if input_direction == Vector2.ZERO:
+		# 停止时播放 idle（保持最后朝向的第一帧）
+		if sprite.animation != &"idle":
+			sprite.play(&"idle")
+		return
+
+	# 判断主方向
+	var new_facing := _facing
+	if absf(input_direction.x) > absf(input_direction.y):
+		# 水平为主
+		if input_direction.x > 0:
+			new_facing = "east"
+		else:
+			new_facing = "west"
+	else:
+		# 垂直为主
+		if input_direction.y > 0:
+			new_facing = "south"
+		else:
+			new_facing = "north"
+
+	# 处理翻转（east 用 west 动画 + flip_h）
+	if new_facing == "east":
+		sprite.flip_h = true
+		if _facing != "east" or not sprite.is_playing():
+			sprite.play(&"walk_east")
+	else:
+		sprite.flip_h = false
+		var anim_name := &"walk_" + new_facing
+		if _facing != new_facing or not sprite.is_playing():
+			sprite.play(anim_name)
+
+	_facing = new_facing
 
 
 func _die() -> void:
