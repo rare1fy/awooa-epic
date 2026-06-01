@@ -27,6 +27,24 @@ var pending_stage_data: StageData = null
 ## 角色详情页用
 var viewing_character_id: StringName = &""
 
+## 全局字体
+var _pixel_font: Font = null
+
+
+func _ready() -> void:
+	_setup_global_font()
+
+
+func _setup_global_font() -> void:
+	# 加载像素字体并设置为全局默认
+	_pixel_font = load("res://assets/fonts/zpix.ttf") as Font
+	if _pixel_font:
+		var theme := Theme.new()
+		theme.default_font = _pixel_font
+		theme.default_font_size = 12
+		# 设置为全局 Theme
+		get_tree().root.theme = theme
+
 
 func change_state(new_state: GameState) -> void:
 	current_state = new_state

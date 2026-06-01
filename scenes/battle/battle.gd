@@ -74,6 +74,7 @@ const MAGNET_DURATION: float = 1.5
 
 
 func _ready() -> void:
+	_setup_ground()
 	_load_stage_config()
 	spawn_timer.timeout.connect(_on_spawn_timer_timeout)
 	spawn_timer.wait_time = 1.5
@@ -81,6 +82,13 @@ func _ready() -> void:
 	_setup_player()
 	_setup_joystick()
 	_setup_hud()
+
+
+func _setup_ground() -> void:
+	var ground := BattleGround.new()
+	ground.name = "Ground"
+	add_child(ground)
+	move_child(ground, 0)  # 确保在最底层
 
 
 func _load_stage_config() -> void:
