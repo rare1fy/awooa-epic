@@ -36,14 +36,17 @@ func _ready() -> void:
 
 
 func _setup_global_font() -> void:
-	# 加载像素字体并设置为全局默认
+	# 加载像素字体并设置为全局默认 Theme（作为 project.godot 设置的备份）
 	_pixel_font = load("res://assets/fonts/zpix.ttf") as Font
 	if _pixel_font:
 		var theme := Theme.new()
 		theme.default_font = _pixel_font
 		theme.default_font_size = 12
 		# 设置为全局 Theme
-		get_tree().root.theme = theme
+		if get_tree() and get_tree().root:
+			get_tree().root.theme = theme
+	else:
+		push_warning("Failed to load zpix.ttf font")
 
 
 func change_state(new_state: GameState) -> void:

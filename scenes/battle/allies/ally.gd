@@ -74,7 +74,7 @@ func initialize(data: AllyData, player: Node2D, index: int) -> void:
 
 	# 占位纹理：绿色圆形带白边
 	if sprite and not sprite.texture:
-		sprite.texture = PlaceholderTexture.outlined_circle(10, data.color, Color(1.0, 1.0, 1.0, 0.8))
+		sprite.texture = PlaceholderTexture.outlined_circle(14, data.color, Color(1.0, 1.0, 1.0, 0.8))
 		sprite.scale = Vector2(1.0, 1.0)
 		sprite.modulate = Color.WHITE
 
