@@ -1,6 +1,4 @@
 extends Control
-## 主菜单场景控制脚本
-## 提供：快速开始、章节选择、角色管理入口
 
 @onready var start_button: Button = %StartButton
 @onready var chapter_button: Button = %ChapterButton
@@ -20,7 +18,7 @@ func _ready() -> void:
 
 func _update_currency_display() -> void:
 	var gold: int = SaveManager.get_currency("gold")
-	gold_label.text = "金币: %d" % gold
+	gold_label.text = "Gold: %d" % gold
 
 
 func _on_start_pressed() -> void:
