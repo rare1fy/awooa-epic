@@ -94,7 +94,7 @@ class SiegeUnit:
 		if heal_timer > 0.0:
 			return
 		heal_timer = heal_interval
-		var wounded := battle.find_wounded_murloc(global_position, 74.0)
+		var wounded: SiegeUnit = battle.find_wounded_murloc(global_position, 74.0)
 		if wounded:
 			wounded.heal(heal_amount)
 			battle.flash_at(wounded.global_position, Color(0.35, 1.0, 0.65, 0.9), 22.0)
@@ -205,7 +205,7 @@ class SiegeBuilding:
 		attack_timer -= delta
 		if attack_timer > 0.0:
 			return
-		var target := battle.find_nearest_murloc(global_position, attack_range, lane)
+		var target: SiegeUnit = battle.find_nearest_murloc(global_position, attack_range, lane)
 		if target:
 			battle.building_attack(self, target)
 			attack_timer = attack_interval
@@ -421,12 +421,12 @@ func _spawn_murloc(card: Dictionary, lane: int) -> void:
 
 func find_target_for(unit: SiegeUnit) -> Node2D:
 	if unit.side == &"murloc":
-		var nearest_unit := _nearest_unit(unit.global_position, defenders, unit.attack_range, unit.lane)
-		var nearest_building := _nearest_building(unit.global_position, unit.attack_range, unit.lane)
+		var nearest_unit: SiegeUnit = _nearest_unit(unit.global_position, defenders, unit.attack_range, unit.lane)
+		var nearest_building: SiegeBuilding = _nearest_building(unit.global_position, unit.attack_range, unit.lane)
 		if nearest_unit and nearest_building:
 			return nearest_unit if unit.global_position.distance_to(nearest_unit.global_position) < unit.global_position.distance_to(nearest_building.global_position) else nearest_building
 		return nearest_unit if nearest_unit else nearest_building
-	var target := _nearest_unit(unit.global_position, murlocs, unit.attack_range, unit.lane)
+	var target: SiegeUnit = _nearest_unit(unit.global_position, murlocs, unit.attack_range, unit.lane)
 	if target:
 		return target
 	if unit.global_position.y >= SPAWN_Y_START + 8.0:
@@ -755,7 +755,7 @@ func _draw() -> void:
 	draw_rect(Rect2(0, 675, 480, 179), Color(0.1, 0.27, 0.22, 1.0))
 
 	for i: int in 3:
-		var x := LANE_X[i]
+		var x: float = LANE_X[i]
 		draw_rect(Rect2(x - 34.0, 150.0, 68.0, 520.0), Color(0.24, 0.44, 0.29, 0.45))
 		draw_line(Vector2(x, 675.0), Vector2(x, 45.0), Color(0.8, 0.9, 0.7, 0.18), 2.0)
 
