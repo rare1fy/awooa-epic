@@ -20,6 +20,8 @@ var is_dead: bool = false
 
 ## 虚拟摇杆输入方向（由 UI 层设置）
 var input_direction: Vector2 = Vector2.ZERO
+## 实际生效的移动方向（键盘或摇杆合并后）
+var _active_direction: Vector2 = Vector2.ZERO
 
 ## 攻击相关
 var _attack_cooldown: float = 0.0
@@ -55,11 +57,15 @@ func _physics_process(delta: float) -> void:
 	if is_dead:
 		return
 
-	# 移动
-	velocity = input_direction * speed
+	# 移动：键盘输入（WASD/方向键）优先，否则用摇杆输入
+	var move_dir := _get_keyboard_direction()
+	if move_dir == Vector2.ZERO:
+		move_dir = input_direction
+	velocity = move_dir * speed
 	move_and_slide()
 
-	# 动画方向切换
+	# 动画方向切换（用实际移动方向）
+	_active_direction = move_dir
 	_update_animation()
 
 	# 自动攻击
@@ -98,6 +104,21 @@ func _try_attack() -> void:
 	# 发射弹道
 	_fire_projectile(nearest)
 	add_ultimate_energy(3.0)
+
+
+func _get_keyboard_direction() -> Vector2:
+	var dir := Vector2.ZERO
+	if Input.is_key_pressed(KEY_A) or Input.is_key_pressed(KEY_LEFT):
+		dir.x -= 1.0
+	if Input.is_key_pressed(KEY_D) or Input.is_key_pressed(KEY_RIGHT):
+		dir.x += 1.0
+	if Input.is_key_pressed(KEY_W) or Input.is_key_pressed(KEY_UP):
+		dir.y -= 1.0
+	if Input.is_key_pressed(KEY_S) or Input.is_key_pressed(KEY_DOWN):
+		dir.y += 1.0
+	if dir != Vector2.ZERO:
+		return dir.normalized()
+	return Vector2.ZERO
 
 
 func _fire_projectile(target: Node2D) -> void:
@@ -180,7 +201,7 @@ func _trigger_ultimate() -> void:
 
 
 func _update_animation() -> void:
-	if input_direction == Vector2.ZERO:
+	if _active_direction == Vector2.ZERO:
 		# 停止时播放 idle（保持最后朝向的第一帧）
 		if sprite.animation != &"idle":
 			sprite.play(&"idle")
@@ -188,15 +209,15 @@ func _update_animation() -> void:
 
 	# 判断主方向
 	var new_facing := _facing
-	if absf(input_direction.x) > absf(input_direction.y):
+	if absf(_active_direction.x) > absf(_active_direction.y):
 		# 水平为主
-		if input_direction.x > 0:
+		if _active_direction.x > 0:
 			new_facing = "east"
 		else:
 			new_facing = "west"
 	else:
 		# 垂直为主
-		if input_direction.y > 0:
+		if _active_direction.y > 0:
 			new_facing = "south"
 		else:
 			new_facing = "north"

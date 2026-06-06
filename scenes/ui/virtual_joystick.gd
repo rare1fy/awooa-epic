@@ -14,11 +14,18 @@ var _current_direction: Vector2 = Vector2.ZERO
 
 @onready var _base: Control = $Base
 @onready var _knob: Control = $Base/Knob
+@onready var _bg_visual: TextureRect = $Base/Background
+@onready var _knob_visual: TextureRect = $Base/Knob/KnobVisual
 
 
 func _ready() -> void:
 	_base.visible = false
 	mouse_filter = Control.MOUSE_FILTER_PASS
+	# 程序化圆形纹理：内外都是圆形，低透明度
+	_bg_visual.texture = PlaceholderTexture.circle(64, Color(1, 1, 1, 1))
+	_bg_visual.modulate = Color(1, 1, 1, 0.18)
+	_knob_visual.texture = PlaceholderTexture.circle(32, Color(1, 1, 1, 1))
+	_knob_visual.modulate = Color(1, 1, 1, 0.32)
 
 
 func _input(event: InputEvent) -> void:

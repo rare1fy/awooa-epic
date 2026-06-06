@@ -31,7 +31,7 @@ var kill_count: int = 0
 
 ## 刷怪配置
 var spawn_radius: float = 350.0
-var max_enemies: int = 150
+var max_enemies: int = 220
 var _stage_duration: float = 900.0
 
 ## 玩家实例引用
@@ -77,7 +77,7 @@ func _ready() -> void:
 	_setup_ground()
 	_load_stage_config()
 	spawn_timer.timeout.connect(_on_spawn_timer_timeout)
-	spawn_timer.wait_time = 1.5
+	spawn_timer.wait_time = 1.0
 	spawn_timer.start()
 	_setup_player()
 	_setup_joystick()
@@ -256,13 +256,13 @@ func _trigger_swarm() -> void:
 	_swarm_end_time = elapsed_time + _swarm_duration
 	_next_swarm_index += 1
 	# 尸潮期间大量刷怪（临时提高上限和频率）
-	max_enemies = 300
+	max_enemies = 400
 	spawn_timer.wait_time = 0.1
 
 
 func _end_swarm() -> void:
 	_swarm_active = false
-	max_enemies = 150
+	max_enemies = 220
 
 
 ## --- 时间轴敌人解锁 ---
@@ -297,24 +297,39 @@ func _update_spawn_difficulty() -> void:
 		return
 	if _boss_active:
 		return
-	var base_interval := 1.5
-	var min_interval := 0.3
+	var base_interval := 1.0
+	var min_interval := 0.2
 	if stage_data:
 		base_interval = stage_data.base_spawn_interval
 		min_interval = stage_data.min_spawn_interval
 	var progress := minf(elapsed_time / _stage_duration, 1.0)
 	spawn_timer.wait_time = lerpf(base_interval, min_interval, progress)
 	# 尸潮结束后恢复上限
-	if not _swarm_active and max_enemies > 150:
-		max_enemies = 150
+	if not _swarm_active and max_enemies > 220:
+		max_enemies = 220
 
 
 func _on_spawn_timer_timeout() -> void:
 	if is_game_over or is_paused or not _player or _boss_active:
 		return
-	if enemies_container.get_child_count() >= max_enemies:
+	var current := enemies_container.get_child_count()
+	if current >= max_enemies:
 		return
-	_spawn_enemy()
+	# 批量生成：数量随进度递增，尸潮期间翻倍
+	var batch := _get_spawn_batch_count()
+	var room := max_enemies - current
+	batch = mini(batch, room)
+	for i: int in batch:
+		_spawn_enemy()
+
+
+## 单次刷怪批量数量：随关卡进度从 2 递增到 6，尸潮期间额外翻倍
+func _get_spawn_batch_count() -> int:
+	var progress := minf(elapsed_time / _stage_duration, 1.0)
+	var base_batch := int(round(lerpf(2.0, 6.0, progress)))
+	if _swarm_active:
+		base_batch *= 2
+	return maxi(1, base_batch)
 
 
 func _spawn_enemy() -> void:
@@ -622,29 +637,78 @@ func _setup_joystick() -> void:
 ## --- 队友管理 ---
 
 func recruit_ally(ally_data: AllyData) -> void:
+	# 自走棋式：每次招募都生成一个独立单位，凑齐 3 个同名同星自动合成
+	_spawn_ally(ally_data)
 	var ally_id := ally_data.id
 	if _ally_roster.has(ally_id):
-		_upgrade_existing_ally(ally_id)
+		_ally_roster[ally_id]["count"] += 1
 	else:
-		_spawn_ally(ally_data)
 		_ally_roster[ally_id] = {"data": ally_data, "count": 1}
+	_check_merge(ally_id, 1)
 
 
 func _spawn_ally(ally_data: AllyData) -> void:
 	var ally := _ally_scene.instantiate() as Ally
 	var index := _allies.size()
-	ally.initialize(ally_data, _player, index)
-	ally.global_position = _player.global_position + Vector2(randf_range(-30, 30), randf_range(-30, 30))
+	# 先加入场景树，确保 @onready 的 Sprite 已就绪，再初始化（否则占位纹理赋值会被跳过）
 	allies_container.add_child(ally)
+	ally.global_position = _player.global_position + Vector2(randf_range(-40, 40), randf_range(-40, 40))
+	ally.initialize(ally_data, _player, index)
 	_allies.append(ally)
+	# 招募出现动画
+	if ally.has_method("play_spawn_anim"):
+		ally.play_spawn_anim()
 
 
-func _upgrade_existing_ally(ally_id: StringName) -> void:
-	_ally_roster[ally_id]["count"] += 1
-	for ally: Node2D in _allies:
-		if ally is Ally and ally.ally_data and ally.ally_data.id == ally_id:
-			ally.upgrade_star()
-			break
+## 检测并执行合成：同 id 同星级满 3 个 → 合成 1 个高一星
+func _check_merge(ally_id: StringName, star: int) -> void:
+	if star >= 3:
+		return
+	var same: Array[Ally] = []
+	for node: Node2D in _allies:
+		if node is Ally:
+			var a := node as Ally
+			if a.ally_data and a.ally_data.id == ally_id and a.star_level == star:
+				same.append(a)
+	if same.size() < 3:
+		return
+
+	# 取前 3 个合成
+	var merge_group: Array[Ally] = []
+	merge_group.append(same[0])
+	merge_group.append(same[1])
+	merge_group.append(same[2])
+	var merge_pos: Vector2 = merge_group[0].global_position
+	var base_data: AllyData = merge_group[0].ally_data
+	var new_star := star + 1
+
+	# 合成动画：3 个聚拢到中心点 + 闪光，然后销毁
+	for unit: Ally in merge_group:
+		if unit.has_method("play_merge_anim"):
+			unit.play_merge_anim(merge_pos)
+		_allies.erase(unit)
+
+	# 延迟生成合成体（等聚拢动画播完）
+	var timer := get_tree().create_timer(0.35)
+	timer.timeout.connect(_finish_merge.bind(base_data, new_star, merge_pos))
+
+
+func _finish_merge(base_data: AllyData, new_star: int, pos: Vector2) -> void:
+	var ally := _ally_scene.instantiate() as Ally
+	var index := _allies.size()
+	allies_container.add_child(ally)
+	ally.global_position = pos
+	ally.initialize(base_data, _player, index)
+	# 升到目标星级
+	while ally.star_level < new_star:
+		ally.upgrade_star()
+	_allies.append(ally)
+	# 合成完成爆发动画
+	if ally.has_method("play_merge_pop_anim"):
+		ally.play_merge_pop_anim()
+	# 继续检测是否能再次合成（如 2★ 也凑够 3 个）
+	if base_data:
+		_check_merge(base_data.id, new_star)
 
 
 ## --- 升级招募面板（3选1）---
@@ -668,10 +732,10 @@ func _show_recruit_panel() -> void:
 	ui_layer.add_child(panel)
 
 	var title := Label.new()
-	title.text = "等级 %d！选择一位队友加入" % player_level
+	title.text = "等级 %d！选择一位队友（集齐3个同名合成升星）" % player_level
 	title.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
-	title.position = Vector2(80, 200)
-	title.size = Vector2(320, 40)
+	title.position = Vector2(40, 200)
+	title.size = Vector2(400, 40)
 	panel.add_child(title)
 
 	var options := _generate_recruit_options(3)
@@ -680,10 +744,7 @@ func _show_recruit_panel() -> void:
 		var opt: Dictionary = options[i]
 		var ally_name: String = opt.get("name", "鱼人")
 		var ally_desc: String = opt.get("desc", "")
-		if opt.get("is_upgrade", false):
-			btn.text = "%s\n[升星 → %d★]" % [ally_name, opt.get("star", 2)]
-		else:
-			btn.text = "%s\n%s" % [ally_name, ally_desc]
+		btn.text = "%s\n%s" % [ally_name, ally_desc]
 		btn.position = Vector2(80, 280 + i * 120)
 		btn.size = Vector2(320, 100)
 		btn.process_mode = Node.PROCESS_MODE_ALWAYS
@@ -719,20 +780,6 @@ func _generate_recruit_options(count: int) -> Array[Dictionary]:
 	var used_indices: Array[int] = []
 
 	for i: int in count:
-		if randf() < 0.4 and not _ally_roster.is_empty():
-			var roster_keys := _ally_roster.keys()
-			var key: StringName = roster_keys[randi() % roster_keys.size()]
-			var info: Dictionary = _ally_roster[key]
-			var current_count: int = info.get("count", 1)
-			if current_count < 3:
-				results.append({
-					"id": key,
-					"name": _get_ally_name_by_id(key),
-					"is_upgrade": true,
-					"star": current_count + 1,
-				})
-				continue
-
 		var idx := randi() % pool.size()
 		var attempts: int = 0
 		while idx in used_indices and attempts < 10:
@@ -766,72 +813,69 @@ func _on_recruit_selected(option: Dictionary, panel: Control) -> void:
 	get_tree().paused = false
 
 	var ally_id: StringName = option.get("id", &"")
-	if option.get("is_upgrade", false):
-		_upgrade_existing_ally(ally_id)
-	else:
-		var data := AllyData.new()
-		data.id = ally_id
-		data.display_name = option.get("name", "鱼人")
-		data.base_damage = 6.0 + player_level * 2.0
-		data.attack_interval = 1.0
-		data.preferred_distance = 80.0
-		data.color = option.get("color", Color(0.3, 0.8, 1.0))
+	var data := AllyData.new()
+	data.id = ally_id
+	data.display_name = option.get("name", "鱼人")
+	data.base_damage = 6.0 + player_level * 2.0
+	data.attack_interval = 1.0
+	data.preferred_distance = 80.0
+	data.color = option.get("color", Color(0.3, 0.8, 1.0))
 
-		# 攻击类型
-		var type_str: String = option.get("type", "远程")
-		match type_str:
-			"近战":
-				data.attack_type = AllyData.AttackType.MELEE
-				data.base_damage *= 1.3
-				data.attack_interval = 0.7
-			"远程":
-				data.attack_type = AllyData.AttackType.RANGED
-			"辅助":
-				data.attack_type = AllyData.AttackType.SUPPORT
-				data.base_damage *= 0.8
-				data.attack_interval = 1.5
-			"范围":
-				data.attack_type = AllyData.AttackType.AOE
-				data.base_damage *= 0.9
-				data.attack_interval = 1.2
-			"连锁":
-				data.attack_type = AllyData.AttackType.CHAIN
-				data.attack_interval = 1.3
-			"陷阱":
-				data.attack_type = AllyData.AttackType.TRAP
-				data.attack_interval = 2.0
+	# 攻击类型
+	var type_str: String = option.get("type", "远程")
+	match type_str:
+		"近战":
+			data.attack_type = AllyData.AttackType.MELEE
+			data.base_damage *= 1.3
+			data.attack_interval = 0.7
+		"远程":
+			data.attack_type = AllyData.AttackType.RANGED
+		"辅助":
+			data.attack_type = AllyData.AttackType.SUPPORT
+			data.base_damage *= 0.8
+			data.attack_interval = 1.5
+		"范围":
+			data.attack_type = AllyData.AttackType.AOE
+			data.base_damage *= 0.9
+			data.attack_interval = 1.2
+		"连锁":
+			data.attack_type = AllyData.AttackType.CHAIN
+			data.attack_interval = 1.3
+		"陷阱":
+			data.attack_type = AllyData.AttackType.TRAP
+			data.attack_interval = 2.0
 
-		# 特殊效果
-		var effect_str: String = option.get("effect", "none")
-		match effect_str:
-			"pierce":
-				data.special_effect = AllyData.SpecialEffect.PIERCE
-				data.pierce_count = 2
-			"slow":
-				data.special_effect = AllyData.SpecialEffect.SLOW
-				data.slow_percent = 0.4
-				data.slow_duration = 2.0
-			"poison":
-				data.special_effect = AllyData.SpecialEffect.POISON
-				data.poison_dps = 3.0
-				data.poison_duration = 3.0
-			"knockback":
-				data.special_effect = AllyData.SpecialEffect.KNOCKBACK
-				data.knockback_force = 150.0
-			"heal":
-				data.special_effect = AllyData.SpecialEffect.HEAL_AURA
-				data.heal_amount = 2.0
-				data.heal_interval = 3.0
-			"explode":
-				data.special_effect = AllyData.SpecialEffect.EXPLODE
-				data.explode_radius = 60.0
-			"chain":
-				data.special_effect = AllyData.SpecialEffect.CHAIN_LIGHTNING
-				data.chain_targets = 3
-			_:
-				data.special_effect = AllyData.SpecialEffect.NONE
+	# 特殊效果
+	var effect_str: String = option.get("effect", "none")
+	match effect_str:
+		"pierce":
+			data.special_effect = AllyData.SpecialEffect.PIERCE
+			data.pierce_count = 2
+		"slow":
+			data.special_effect = AllyData.SpecialEffect.SLOW
+			data.slow_percent = 0.4
+			data.slow_duration = 2.0
+		"poison":
+			data.special_effect = AllyData.SpecialEffect.POISON
+			data.poison_dps = 3.0
+			data.poison_duration = 3.0
+		"knockback":
+			data.special_effect = AllyData.SpecialEffect.KNOCKBACK
+			data.knockback_force = 150.0
+		"heal":
+			data.special_effect = AllyData.SpecialEffect.HEAL_AURA
+			data.heal_amount = 2.0
+			data.heal_interval = 3.0
+		"explode":
+			data.special_effect = AllyData.SpecialEffect.EXPLODE
+			data.explode_radius = 60.0
+		"chain":
+			data.special_effect = AllyData.SpecialEffect.CHAIN_LIGHTNING
+			data.chain_targets = 3
+		_:
+			data.special_effect = AllyData.SpecialEffect.NONE
 
-		recruit_ally(data)
+	recruit_ally(data)
 
 
 ## --- 输入 ---
@@ -863,34 +907,38 @@ func _pause_game() -> void:
 	panel.process_mode = Node.PROCESS_MODE_ALWAYS
 	ui_layer.add_child(panel)
 
+	# 居中容器：自动撑满全屏并把内容居中
+	var center := CenterContainer.new()
+	center.set_anchors_preset(Control.PRESET_FULL_RECT)
+	center.process_mode = Node.PROCESS_MODE_ALWAYS
+	panel.add_child(center)
+
+	var vbox := VBoxContainer.new()
+	vbox.add_theme_constant_override("separation", 20)
+	vbox.alignment = BoxContainer.ALIGNMENT_CENTER
+	center.add_child(vbox)
+
 	var label := Label.new()
 	label.text = "暂停"
 	label.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
-	label.vertical_alignment = VERTICAL_ALIGNMENT_CENTER
-	label.set_anchors_preset(Control.PRESET_CENTER)
-	label.position = Vector2(-40, -60)
-	panel.add_child(label)
+	vbox.add_child(label)
 
 	var resume_btn := Button.new()
 	resume_btn.text = "继续"
-	resume_btn.position = Vector2(-60, -10)
-	resume_btn.size = Vector2(120, 50)
-	resume_btn.anchors_preset = Control.PRESET_CENTER
+	resume_btn.custom_minimum_size = Vector2(160, 50)
 	resume_btn.process_mode = Node.PROCESS_MODE_ALWAYS
 	resume_btn.pressed.connect(_resume_game)
-	panel.add_child(resume_btn)
+	vbox.add_child(resume_btn)
 
 	var quit_btn := Button.new()
 	quit_btn.text = "退出关卡"
-	quit_btn.position = Vector2(-60, 50)
-	quit_btn.size = Vector2(120, 50)
-	quit_btn.anchors_preset = Control.PRESET_CENTER
+	quit_btn.custom_minimum_size = Vector2(160, 50)
 	quit_btn.process_mode = Node.PROCESS_MODE_ALWAYS
 	quit_btn.pressed.connect(func() -> void:
 		get_tree().paused = false
 		GameManager.return_to_chapter_map()
 	)
-	panel.add_child(quit_btn)
+	vbox.add_child(quit_btn)
 
 
 func _resume_game() -> void:

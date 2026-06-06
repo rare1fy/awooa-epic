@@ -34,6 +34,9 @@ var _heal_timer: float = 0.0
 ## 视觉
 var _flash_timer: float = 0.0
 
+## 合成动画中（暂停常规行为）
+var _merging: bool = false
+
 ## 弹道
 var _projectile_scene: PackedScene = preload("res://scenes/battle/projectiles/projectile.tscn")
 
@@ -72,11 +75,15 @@ func initialize(data: AllyData, player: Node2D, index: int) -> void:
 			attack_range = 160.0
 			preferred_distance = 85.0
 
-	# 占位纹理：绿色圆形带白边
+	# 占位纹理：彩色圆形带白边（容错获取 Sprite，不依赖 @onready 时机）
+	if not sprite:
+		sprite = get_node_or_null("Sprite") as Sprite2D
 	if sprite and not sprite.texture:
-		sprite.texture = PlaceholderTexture.outlined_circle(16, data.color, Color(1.0, 1.0, 1.0, 0.8))
+		var fill_color: Color = data.color if data.color.a > 0.0 else Color(0.3, 0.8, 1.0, 1.0)
+		sprite.texture = PlaceholderTexture.outlined_circle(12, fill_color, Color(1, 1, 1, 0.9))
 		sprite.scale = Vector2(1.0, 1.0)
 		sprite.modulate = Color.WHITE
+		sprite.z_index = 5
 
 	_update_formation_offset()
 	_attack_cooldown = randf() * attack_interval
@@ -84,6 +91,8 @@ func initialize(data: AllyData, player: Node2D, index: int) -> void:
 
 func _physics_process(delta: float) -> void:
 	if not player_ref:
+		return
+	if _merging:
 		return
 
 	_follow_player(delta)
@@ -377,3 +386,47 @@ func _apply_star_bonus() -> void:
 func update_formation_index(new_index: int) -> void:
 	formation_index = new_index
 	_update_formation_offset()
+
+
+## --- 动画 ---
+
+## 招募出现：从 0 缩放弹出 + 透明渐入
+func play_spawn_anim() -> void:
+	if not sprite:
+		sprite = get_node_or_null("Sprite") as Sprite2D
+	if not sprite:
+		return
+	sprite.scale = Vector2.ZERO
+	sprite.modulate.a = 0.0
+	var tween := create_tween()
+	tween.set_parallel(true)
+	tween.tween_property(sprite, "scale", Vector2(1.25, 1.25), 0.18).set_trans(Tween.TRANS_BACK).set_ease(Tween.EASE_OUT)
+	tween.tween_property(sprite, "modulate:a", 1.0, 0.18)
+	tween.chain().tween_property(sprite, "scale", Vector2(1.0, 1.0), 0.1)
+
+
+## 合成聚拢：飞向合成中心点 + 旋转放大后消失
+func play_merge_anim(center_pos: Vector2) -> void:
+	_merging = true
+	set_physics_process(true)  # 保持节点活跃以播放 tween
+	var tween := create_tween()
+	tween.set_parallel(true)
+	tween.tween_property(self, "global_position", center_pos, 0.3).set_trans(Tween.TRANS_QUAD).set_ease(Tween.EASE_IN)
+	if sprite:
+		tween.tween_property(sprite, "rotation", TAU, 0.3)
+		tween.tween_property(sprite, "modulate", Color(2, 2, 2, 0.3), 0.3)
+	tween.chain().tween_callback(queue_free)
+
+
+## 合成完成爆发：从大缩到正常 + 金光闪烁
+func play_merge_pop_anim() -> void:
+	if not sprite:
+		sprite = get_node_or_null("Sprite") as Sprite2D
+	if not sprite:
+		return
+	sprite.scale = Vector2(2.0, 2.0)
+	sprite.modulate = Color(2.5, 2.2, 1.0, 1.0)  # 金光
+	var tween := create_tween()
+	tween.set_parallel(true)
+	tween.tween_property(sprite, "scale", Vector2(1.0, 1.0), 0.35).set_trans(Tween.TRANS_BACK).set_ease(Tween.EASE_OUT)
+	tween.tween_property(sprite, "modulate", Color.WHITE, 0.35)
