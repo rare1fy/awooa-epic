@@ -38,7 +38,7 @@ var _flash_timer: float = 0.0
 
 ## 受伤无敌帧
 var _invincible_timer: float = 0.0
-const INVINCIBLE_DURATION: float = 0.15
+const INVINCIBLE_DURATION: float = 0.4
 
 ## 当前朝向（用于动画）
 var _facing: String = "south"

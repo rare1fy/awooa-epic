@@ -426,7 +426,7 @@ func _apply_default_enemy_type(enemy: Node2D, difficulty_mult: float) -> void:
 			data.speed = 70.0
 			data.exp_drop = 3
 			data.color = Color(0.8, 0.8, 0.9, 1.0)  # 银甲白
-			data.dash_speed_mult = 3.0
+			data.dash_speed_mult = 1.7
 			data.dash_interval = 3.0
 			data.dash_duration = 0.4
 		else:
@@ -469,7 +469,7 @@ func _apply_default_enemy_type(enemy: Node2D, difficulty_mult: float) -> void:
 			data.speed = 75.0
 			data.exp_drop = 4
 			data.color = Color(1.0, 0.85, 0.2, 1.0)  # 圣光金
-			data.dash_speed_mult = 3.5
+			data.dash_speed_mult = 1.8
 			data.dash_interval = 2.5
 			data.dash_duration = 0.5
 		elif roll < 0.65:

@@ -4,7 +4,7 @@
 [ext_resource type="SpriteFrames" path="res://assets/player/player_frames.tres" id="2"]
 
 [sub_resource type="CircleShape2D" id="1"]
-radius = 14.0
+radius = 9.0
 
 [node name="Player" type="CharacterBody2D"]
 collision_layer = 1

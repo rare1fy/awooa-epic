@@ -19,6 +19,8 @@ var behavior: EnemyData.BehaviorType = EnemyData.BehaviorType.CHARGE
 ## 碰撞伤害冷却
 var _damage_cooldown: float = 0.0
 const DAMAGE_INTERVAL: float = 0.5
+## 接触伤害倍率：放大贴身碰撞伤害，使玩家满血约 4~5 下被击杀（不影响远程弹道伤害）
+const CONTACT_DAMAGE_MULT: float = 2.6
 
 ## 受击闪白
 var _flash_timer: float = 0.0
@@ -38,7 +40,7 @@ var _circle_shrink_speed: float = 8.0
 var _dash_timer: float = 0.0
 var _dash_interval: float = 3.0
 var _dash_duration: float = 0.4
-var _dash_speed_mult: float = 3.0
+var _dash_speed_mult: float = 1.7
 var _is_dashing: bool = false
 var _dash_elapsed: float = 0.0
 var _dash_direction: Vector2 = Vector2.ZERO
@@ -233,7 +235,7 @@ func _behavior_circle(delta: float, spd: float) -> void:
 		sin(_circle_angle) * _circle_radius
 	)
 	var direction := global_position.direction_to(target_pos)
-	velocity = direction * spd * 1.2
+	velocity = direction * spd * 0.9
 
 
 func _behavior_dash(delta: float, spd: float) -> void:
@@ -283,9 +285,9 @@ func _fire_at_player() -> void:
 
 func _check_player_collision() -> void:
 	var distance := global_position.distance_to(player_ref.global_position)
-	if distance < 32.0:
+	if distance < 22.0:
 		if player_ref.has_method("take_damage"):
-			player_ref.take_damage(damage)
+			player_ref.take_damage(damage * CONTACT_DAMAGE_MULT)
 			_damage_cooldown = DAMAGE_INTERVAL
 
 
@@ -392,7 +394,7 @@ func _spawn_split_children() -> void:
 		child.hp = max_hp * _split_hp_ratio
 		child.max_hp = child.hp
 		child.damage = damage * 0.6
-		child.speed = speed * 1.3
+		child.speed = speed * 1.0
 		child.exp_value = maxi(exp_value / 2, 1)
 		child._is_split_child = true
 		child.behavior = EnemyData.BehaviorType.CHARGE
