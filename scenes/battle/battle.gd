@@ -6,15 +6,15 @@ signal player_leveled_up(level: int)
 
 @onready var camera: Camera2D = %Camera2D
 @onready var player_node: Node2D = %Player
-@onready var allies_container: Node2D = %Allies
 @onready var enemies_container: Node2D = %Enemies
+@onready var pickups_container: Node2D = %Pickups
 @onready var ui_layer: CanvasLayer = %UI
 @onready var spawn_timer: Timer = %SpawnTimer
 
 ## 预加载场景
 var _enemy_scene: PackedScene = preload("res://scenes/battle/enemies/enemy.tscn")
 var _player_scene: PackedScene = preload("res://scenes/battle/player/player.tscn")
-var _ally_scene: PackedScene = preload("res://scenes/battle/allies/ally.tscn")
+var _pickup_scene: PackedScene = preload("res://scenes/battle/pickups/pickup.tscn")
 
 ## 关卡数据（由外部注入或默认）
 @export var stage_data: StageData
@@ -28,19 +28,25 @@ var player_level: int = 1
 var player_exp: int = 0
 var exp_to_next_level: int = 10
 var kill_count: int = 0
+## 本局收集的金币（结算进局外经济）
+var coins_collected: int = 0
+
+## --- 地图道具定时生成 ---
+var _pickup_spawn_timer: float = 0.0
+const PICKUP_SPAWN_INTERVAL: float = 12.0
+
+## --- 压力事件调度（蝙蝠群冲场 / 食人花围堵）---
+var _pressure_event_times: Array[float] = [45.0, 110.0, 200.0, 320.0, 460.0, 620.0, 780.0]
+var _next_pressure_index: int = 0
 
 ## 刷怪配置
-var spawn_radius: float = 350.0
-var max_enemies: int = 220
+var spawn_radius: float = 300.0
+var max_enemies: int = 280
 var _stage_duration: float = 900.0
 
 ## 玩家实例引用
 var _player: Node2D = null
 var _joystick: Control = null
-
-## --- 队友系统 ---
-var _allies: Array[Node2D] = []
-var _ally_roster: Dictionary = {}
 
 ## --- Boss 系统 ---
 var _boss_times: Array[float] = [300.0, 600.0, 900.0]
@@ -123,6 +129,8 @@ func _process(delta: float) -> void:
 	_check_boss_trigger()
 	_check_swarm_trigger()
 	_check_enemy_unlocks()
+	_check_pressure_events()
+	_update_pickup_spawn(delta)
 	_check_victory()
 	_update_camera(delta)
 	_update_shake(delta)
@@ -262,7 +270,7 @@ func _trigger_swarm() -> void:
 
 func _end_swarm() -> void:
 	_swarm_active = false
-	max_enemies = 220
+	max_enemies = 280
 
 
 ## --- 时间轴敌人解锁 ---
@@ -305,8 +313,8 @@ func _update_spawn_difficulty() -> void:
 	var progress := minf(elapsed_time / _stage_duration, 1.0)
 	spawn_timer.wait_time = lerpf(base_interval, min_interval, progress)
 	# 尸潮结束后恢复上限
-	if not _swarm_active and max_enemies > 220:
-		max_enemies = 220
+	if not _swarm_active and max_enemies > 280:
+		max_enemies = 280
 
 
 func _on_spawn_timer_timeout() -> void:
@@ -520,6 +528,149 @@ func on_enemy_killed(_enemy: Node2D, _exp_value: int) -> void:
 	kill_count += 1
 
 
+## --- 地图道具：金币 / 回血 / 宝箱 ---
+
+## 敌人死亡时按概率掉落金币/回血/宝箱（由 enemy._die 调用）
+func roll_enemy_drops(pos: Vector2, exp_value: int, is_split_child: bool) -> void:
+	if is_split_child:
+		return  # 分裂子体不额外掉落，避免刷屏
+	# 金币：基础概率，强怪（exp 高）概率更高
+	var coin_chance := 0.18 + minf(exp_value * 0.02, 0.25)
+	if randf() < coin_chance:
+		_spawn_pickup(pos, Pickup.Kind.COIN, 5 + exp_value * 2)
+	# 回血：低概率
+	if randf() < 0.025:
+		_spawn_pickup(pos, Pickup.Kind.HEAL, 25)
+	# 宝箱：稀有（精英级以上才有机会）
+	if exp_value >= 5 and randf() < 0.04:
+		_spawn_pickup(pos, Pickup.Kind.CHEST, 0)
+
+
+func _spawn_pickup(pos: Vector2, kind: Pickup.Kind, value: int) -> void:
+	var pickup := _pickup_scene.instantiate() as Pickup
+	pickup.kind = kind
+	pickup.value = value
+	pickup.global_position = pos
+	pickups_container.add_child.call_deferred(pickup)
+
+
+## 定时在玩家周围生成金币/回血道具，鼓励走位收集
+func _update_pickup_spawn(delta: float) -> void:
+	if not _player or _boss_active:
+		return
+	_pickup_spawn_timer -= delta
+	if _pickup_spawn_timer > 0.0:
+		return
+	_pickup_spawn_timer = PICKUP_SPAWN_INTERVAL
+	# 在屏幕可见范围内、玩家附近随机位置撒 1~2 个金币
+	var coin_count := randi_range(1, 2)
+	for i: int in coin_count:
+		var angle := randf() * TAU
+		var dist := randf_range(120.0, 260.0)
+		var pos := _player.global_position + Vector2(cos(angle), sin(angle)) * dist
+		_spawn_pickup(pos, Pickup.Kind.COIN, 8)
+	# 偶尔撒一个回血
+	if randf() < 0.25:
+		var angle2 := randf() * TAU
+		var pos2 := _player.global_position + Vector2(cos(angle2), sin(angle2)) * randf_range(150.0, 240.0)
+		_spawn_pickup(pos2, Pickup.Kind.HEAL, 30)
+
+
+## 金币拾取回调（由 pickup._collect 调用）
+func collect_coin(amount: int) -> void:
+	coins_collected += amount
+
+
+## 开箱回调：给金币 + 立即触发一次武器升级（由 pickup._collect 调用）
+func open_chest() -> void:
+	coins_collected += randi_range(30, 60)
+	shake_camera(3.0, 6.0)
+	# 触发一次构筑升级（与升级面板共用）
+	_show_levelup_panel()
+
+
+## --- 压力事件：蝙蝠群冲场 / 食人花围堵 ---
+
+func _check_pressure_events() -> void:
+	if _boss_active or _swarm_active:
+		return
+	if _next_pressure_index >= _pressure_event_times.size():
+		return
+	if elapsed_time >= _pressure_event_times[_next_pressure_index]:
+		_next_pressure_index += 1
+		# 交替触发两种事件
+		if _next_pressure_index % 2 == 1:
+			_trigger_bat_swarm()
+		else:
+			_trigger_piranha_encircle()
+
+
+## 蝙蝠群冲场：从屏幕一侧成排高速横扫而过
+func _trigger_bat_swarm() -> void:
+	if not _player:
+		return
+	var enemy_count := enemies_container.get_child_count()
+	if enemy_count >= max_enemies:
+		return
+	# 随机选一条边作为出发侧，朝对侧冲
+	var from_left := randf() < 0.5
+	var side_x := -560.0 if from_left else 560.0
+	var sweep_dir := Vector2(1.0 if from_left else -1.0, 0.0)
+	var difficulty_mult := 1.0 + elapsed_time / _stage_duration * 0.5
+	var bat_count := 14
+	var room := max_enemies - enemy_count
+	bat_count = mini(bat_count, room)
+	for i: int in bat_count:
+		var bat := _enemy_scene.instantiate()
+		var y_offset := randf_range(-200.0, 200.0)
+		bat.global_position = _player.global_position + Vector2(side_x, y_offset)
+		bat.player_ref = _player
+		var data := EnemyData.new()
+		data.behavior = EnemyData.BehaviorType.CHARGE
+		data.base_hp = 8.0
+		data.base_damage = 6.0
+		data.speed = 220.0  # 高速横扫
+		data.exp_drop = 1
+		data.color = Color(0.35, 0.2, 0.45, 1.0)  # 暗紫蝙蝠
+		data.scale_mult = 0.7
+		bat.initialize(data, _player, difficulty_mult)
+		# 冲场蝙蝠初速朝对侧（靠 charge AI 追玩家，但起手有横扫感）
+		bat.velocity = sweep_dir * data.speed
+		bat.add_to_group("enemies")
+		enemies_container.add_child(bat)
+	shake_camera(2.0, 6.0)
+
+
+## 食人花围堵：在玩家四周生成一圈缓慢收拢的怪
+func _trigger_piranha_encircle() -> void:
+	if not _player:
+		return
+	var enemy_count := enemies_container.get_child_count()
+	if enemy_count >= max_enemies:
+		return
+	var difficulty_mult := 1.0 + elapsed_time / _stage_duration * 0.5
+	var ring_count := 18
+	var room := max_enemies - enemy_count
+	ring_count = mini(ring_count, room)
+	var radius := 280.0
+	for i: int in ring_count:
+		var angle := (float(i) / float(ring_count)) * TAU
+		var flower := _enemy_scene.instantiate()
+		flower.global_position = _player.global_position + Vector2(cos(angle), sin(angle)) * radius
+		flower.player_ref = _player
+		var data := EnemyData.new()
+		data.behavior = EnemyData.BehaviorType.CHARGE
+		data.base_hp = 30.0
+		data.base_damage = 8.0
+		data.speed = 42.0  # 缓慢收拢
+		data.exp_drop = 2
+		data.color = Color(0.85, 0.25, 0.45, 1.0)  # 食人花红
+		data.scale_mult = 1.1
+		flower.initialize(data, _player, difficulty_mult)
+		flower.add_to_group("enemies")
+		enemies_container.add_child(flower)
+
+
 ## --- 经验 / 升级 ---
 
 func add_exp(amount: int) -> void:
@@ -530,7 +681,7 @@ func add_exp(amount: int) -> void:
 		exp_to_next_level = _calc_exp_requirement(player_level)
 		player_leveled_up.emit(player_level)
 		activate_magnet()
-		_show_recruit_panel()
+		_show_levelup_panel()
 
 
 func _calc_exp_requirement(level: int) -> int:
@@ -548,15 +699,8 @@ func _update_camera(delta: float) -> void:
 		return
 	camera.global_position = _player.global_position
 
-	var ally_count := _allies.size()
-	if ally_count <= 4:
-		_camera_target_zoom = CAMERA_ZOOM_MAX
-	else:
-		var t := clampf((float(ally_count) - 4.0) / 16.0, 0.0, 1.0)
-		_camera_target_zoom = lerpf(CAMERA_ZOOM_MAX, CAMERA_ZOOM_MIN, t)
-
 	var current_zoom := camera.zoom.x
-	var new_zoom := lerpf(current_zoom, _camera_target_zoom, delta * CAMERA_ZOOM_SPEED)
+	var new_zoom := lerpf(current_zoom, CAMERA_ZOOM_MAX, delta * CAMERA_ZOOM_SPEED)
 	camera.zoom = Vector2(new_zoom, new_zoom)
 
 
@@ -592,6 +736,11 @@ func _update_magnet(delta: float) -> void:
 	for gem: Node2D in gems:
 		if gem.has_method("attract_to"):
 			gem.attract_to(_player.global_position)
+	# 同时吸取金币/回血道具
+	var pickups := get_tree().get_nodes_in_group("pickups")
+	for p: Node2D in pickups:
+		if p.has_method("attract_to"):
+			p.attract_to(_player.global_position)
 
 
 func activate_magnet() -> void:
@@ -619,12 +768,17 @@ func _setup_player() -> void:
 		_player.current_hp = _player.max_hp
 		_player.speed = char_data.get("base_speed", 180.0)
 		_player.damage = char_data.get("base_damage", 12.0) * level_mult
-		_player.attack_range = 160.0
-		_player._attack_interval = char_data.get("attack_interval", 0.5)
 		# 角色颜色
 		var char_color: Color = char_data.get("color", Color(0.3, 0.7, 1.0))
 		if _player.sprite:
 			_player.sprite.modulate = char_color
+
+	# 同步基础属性后授予初始武器
+	_player.base_max_hp = _player.max_hp
+	_player.base_speed = _player.speed
+	var starter := WeaponRegistry.get_weapon(&"flying_dagger")
+	if starter:
+		_player.acquire_weapon(starter)
 
 
 func _setup_joystick() -> void:
@@ -636,93 +790,17 @@ func _setup_joystick() -> void:
 
 ## --- 队友管理 ---
 
-func recruit_ally(ally_data: AllyData) -> void:
-	# 自走棋式：每次招募都生成一个独立单位，凑齐 3 个同名同星自动合成
-	_spawn_ally(ally_data)
-	var ally_id := ally_data.id
-	if _ally_roster.has(ally_id):
-		_ally_roster[ally_id]["count"] += 1
-	else:
-		_ally_roster[ally_id] = {"data": ally_data, "count": 1}
-	_check_merge(ally_id, 1)
+## --- 升级面板（武器/被动 3 选 1）---
 
-
-func _spawn_ally(ally_data: AllyData) -> void:
-	var ally := _ally_scene.instantiate() as Ally
-	var index := _allies.size()
-	# 先加入场景树，确保 @onready 的 Sprite 已就绪，再初始化（否则占位纹理赋值会被跳过）
-	allies_container.add_child(ally)
-	ally.global_position = _player.global_position + Vector2(randf_range(-40, 40), randf_range(-40, 40))
-	ally.initialize(ally_data, _player, index)
-	_allies.append(ally)
-	# 招募出现动画
-	if ally.has_method("play_spawn_anim"):
-		ally.play_spawn_anim()
-
-
-## 检测并执行合成：同 id 同星级满 3 个 → 合成 1 个高一星
-func _check_merge(ally_id: StringName, star: int) -> void:
-	if star >= 3:
-		return
-	var same: Array[Ally] = []
-	for node: Node2D in _allies:
-		if node is Ally:
-			var a := node as Ally
-			if a.ally_data and a.ally_data.id == ally_id and a.star_level == star:
-				same.append(a)
-	if same.size() < 3:
-		return
-
-	# 取前 3 个合成
-	var merge_group: Array[Ally] = []
-	merge_group.append(same[0])
-	merge_group.append(same[1])
-	merge_group.append(same[2])
-	var merge_pos: Vector2 = merge_group[0].global_position
-	var base_data: AllyData = merge_group[0].ally_data
-	var new_star := star + 1
-
-	# 合成动画：3 个聚拢到中心点 + 闪光，然后销毁
-	for unit: Ally in merge_group:
-		if unit.has_method("play_merge_anim"):
-			unit.play_merge_anim(merge_pos)
-		_allies.erase(unit)
-
-	# 延迟生成合成体（等聚拢动画播完）
-	var timer := get_tree().create_timer(0.35)
-	timer.timeout.connect(_finish_merge.bind(base_data, new_star, merge_pos))
-
-
-func _finish_merge(base_data: AllyData, new_star: int, pos: Vector2) -> void:
-	var ally := _ally_scene.instantiate() as Ally
-	var index := _allies.size()
-	allies_container.add_child(ally)
-	ally.global_position = pos
-	ally.initialize(base_data, _player, index)
-	# 升到目标星级
-	while ally.star_level < new_star:
-		ally.upgrade_star()
-	_allies.append(ally)
-	# 合成完成爆发动画
-	if ally.has_method("play_merge_pop_anim"):
-		ally.play_merge_pop_anim()
-	# 继续检测是否能再次合成（如 2★ 也凑够 3 个）
-	if base_data:
-		_check_merge(base_data.id, new_star)
-
-
-## --- 升级招募面板（3选1）---
-
-func _show_recruit_panel() -> void:
+func _show_levelup_panel() -> void:
 	is_paused = true
 	get_tree().paused = true
 
 	var panel := ColorRect.new()
-	panel.name = "RecruitPanel"
+	panel.name = "LevelUpPanel"
 	panel.set_anchors_preset(Control.PRESET_FULL_RECT)
 	panel.color = Color(0, 0, 0, 0.6)
 	panel.process_mode = Node.PROCESS_MODE_ALWAYS
-	# 显式设置字体
 	var font := load("res://assets/fonts/zpix.ttf") as Font
 	if font:
 		var panel_theme := Theme.new()
@@ -732,150 +810,94 @@ func _show_recruit_panel() -> void:
 	ui_layer.add_child(panel)
 
 	var title := Label.new()
-	title.text = "等级 %d！选择一位队友（集齐3个同名合成升星）" % player_level
+	title.text = "等级 %d！强化你的深海之力" % player_level
 	title.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
-	title.position = Vector2(40, 200)
+	title.position = Vector2(40, 180)
 	title.size = Vector2(400, 40)
 	panel.add_child(title)
 
-	var options := _generate_recruit_options(3)
+	var options := _generate_upgrade_options(3)
+	if options.is_empty():
+		# 无可选项（全满级）：直接关闭并给金币奖励
+		panel.queue_free()
+		is_paused = false
+		get_tree().paused = false
+		return
+
 	for i: int in options.size():
+		var data: WeaponData = options[i]
 		var btn := Button.new()
-		var opt: Dictionary = options[i]
-		var ally_name: String = opt.get("name", "鱼人")
-		var ally_desc: String = opt.get("desc", "")
-		btn.text = "%s\n%s" % [ally_name, ally_desc]
-		btn.position = Vector2(80, 280 + i * 120)
+		btn.text = _format_option_text(data)
+		btn.position = Vector2(80, 260 + i * 120)
 		btn.size = Vector2(320, 100)
 		btn.process_mode = Node.PROCESS_MODE_ALWAYS
-		btn.pressed.connect(_on_recruit_selected.bind(opt, panel))
+		btn.pressed.connect(_on_upgrade_selected.bind(data, panel))
 		panel.add_child(btn)
 
 
-func _generate_recruit_options(count: int) -> Array[Dictionary]:
-	var pool: Array[Dictionary] = [
-		{"id": &"murloc_tidehunter", "name": "鱼人猎潮者", "type": "远程", "effect": "pierce",
-			"desc": "鱼叉穿透2敌", "color": Color(0.2, 0.7, 0.5)},
-		{"id": &"murloc_warleader", "name": "鱼人战争队长", "type": "近战", "effect": "none",
-			"desc": "高伤冲锋近战，鼓舞周围", "color": Color(0.3, 0.9, 0.3)},
-		{"id": &"murloc_tidecaller", "name": "鱼人唤潮者", "type": "范围", "effect": "slow",
-			"desc": "潮汐波减速范围敌人", "color": Color(0.2, 0.5, 0.9)},
-		{"id": &"murloc_oracle", "name": "鱼人先知", "type": "辅助", "effect": "heal",
-			"desc": "水疗术周期治疗主角", "color": Color(0.3, 0.8, 0.9)},
-		{"id": &"murloc_nightcrawler", "name": "鱼人夜行者", "type": "近战", "effect": "poison",
-			"desc": "淬毒匕首持续掉血", "color": Color(0.4, 0.9, 0.2)},
-		{"id": &"makrura_snapclaw", "name": "螃蟹人利爪", "type": "近战", "effect": "knockback",
-			"desc": "钳击猛击击退敌人", "color": Color(0.8, 0.3, 0.2)},
-		{"id": &"murloc_seer", "name": "鱼人巫医", "type": "连锁", "effect": "chain",
-			"desc": "闪电链弹射3目标", "color": Color(0.6, 0.2, 0.9)},
-		{"id": &"murloc_raider", "name": "鱼人掠袭者", "type": "远程", "effect": "pierce",
-			"desc": "高速飞鱼镖穿透3敌", "color": Color(0.1, 0.6, 0.7)},
-		{"id": &"makrura_boomer", "name": "螃蟹人爆破蟹", "type": "近战", "effect": "explode",
-			"desc": "蟹钳炸裂AOE伤害", "color": Color(0.9, 0.4, 0.1)},
-		{"id": &"murloc_lurker", "name": "鱼人潜伏者", "type": "陷阱", "effect": "slow",
-			"desc": "放置水洼减速陷阱", "color": Color(0.2, 0.4, 0.6)},
-	]
+## 生成升级选项：从未满级的武器/被动池抽取，已拥有则显示"升级"
+func _generate_upgrade_options(count: int) -> Array[WeaponData]:
+	var wm: WeaponManager = _player.weapon_manager if _player else null
+	if not wm:
+		return []
 
-	var results: Array[Dictionary] = []
-	var used_indices: Array[int] = []
+	var candidates: Array[WeaponData] = []
+	# 已拥有但未满级的优先纳入
+	var owned_room: Array[WeaponData] = []
+	var fresh: Array[WeaponData] = []
 
-	for i: int in count:
-		var idx := randi() % pool.size()
-		var attempts: int = 0
-		while idx in used_indices and attempts < 10:
-			idx = randi() % pool.size()
-			attempts += 1
-		used_indices.append(idx)
-		results.append(pool[idx])
+	var weapon_slots_full := wm.get_weapon_count() >= 6
+	for w: WeaponData in WeaponRegistry.get_pool_weapons():
+		if wm.has_weapon(w.id):
+			if not wm.is_maxed(w):
+				owned_room.append(w)
+		elif not weapon_slots_full:
+			fresh.append(w)
 
+	var passive_slots_full := wm.get_passive_count() >= 6
+	for p: WeaponData in WeaponRegistry.get_pool_passives():
+		if wm.has_passive(p.id):
+			if not wm.is_maxed(p):
+				owned_room.append(p)
+		elif not passive_slots_full:
+			fresh.append(p)
+
+	candidates.append_array(owned_room)
+	candidates.append_array(fresh)
+	candidates.shuffle()
+
+	var results: Array[WeaponData] = []
+	for c: WeaponData in candidates:
+		if results.size() >= count:
+			break
+		results.append(c)
 	return results
 
 
-func _get_ally_name_by_id(id: StringName) -> String:
-	var names := {
-		&"murloc_tidehunter": "鱼人猎潮者",
-		&"murloc_warleader": "鱼人战争队长",
-		&"murloc_tidecaller": "鱼人唤潮者",
-		&"murloc_oracle": "鱼人先知",
-		&"murloc_nightcrawler": "鱼人夜行者",
-		&"makrura_snapclaw": "螃蟹人利爪",
-		&"murloc_seer": "鱼人巫医",
-		&"murloc_raider": "鱼人掠袭者",
-		&"makrura_boomer": "螃蟹人爆破蟹",
-		&"murloc_lurker": "鱼人潜伏者",
-	}
-	return names.get(id, "鱼人")
+func _format_option_text(data: WeaponData) -> String:
+	var wm: WeaponManager = _player.weapon_manager
+	var owned_level := 0
+	if data.kind == WeaponData.Kind.PASSIVE:
+		owned_level = wm.get_passive_level(data.id)
+	else:
+		owned_level = wm.get_weapon_level(data.id)
+
+	var tag := "武器" if data.kind == WeaponData.Kind.WEAPON else "被动"
+	var state := ""
+	if owned_level > 0:
+		state = "（Lv%d → %d）" % [owned_level, owned_level + 1]
+	else:
+		state = "（新获得）"
+	return "[%s] %s %s\n%s" % [tag, data.display_name, state, data.description]
 
 
-func _on_recruit_selected(option: Dictionary, panel: Control) -> void:
+func _on_upgrade_selected(data: WeaponData, panel: Control) -> void:
 	panel.queue_free()
 	is_paused = false
 	get_tree().paused = false
+	if _player:
+		_player.acquire_weapon(data)
 
-	var ally_id: StringName = option.get("id", &"")
-	var data := AllyData.new()
-	data.id = ally_id
-	data.display_name = option.get("name", "鱼人")
-	data.base_damage = 6.0 + player_level * 2.0
-	data.attack_interval = 1.0
-	data.preferred_distance = 80.0
-	data.color = option.get("color", Color(0.3, 0.8, 1.0))
-
-	# 攻击类型
-	var type_str: String = option.get("type", "远程")
-	match type_str:
-		"近战":
-			data.attack_type = AllyData.AttackType.MELEE
-			data.base_damage *= 1.3
-			data.attack_interval = 0.7
-		"远程":
-			data.attack_type = AllyData.AttackType.RANGED
-		"辅助":
-			data.attack_type = AllyData.AttackType.SUPPORT
-			data.base_damage *= 0.8
-			data.attack_interval = 1.5
-		"范围":
-			data.attack_type = AllyData.AttackType.AOE
-			data.base_damage *= 0.9
-			data.attack_interval = 1.2
-		"连锁":
-			data.attack_type = AllyData.AttackType.CHAIN
-			data.attack_interval = 1.3
-		"陷阱":
-			data.attack_type = AllyData.AttackType.TRAP
-			data.attack_interval = 2.0
-
-	# 特殊效果
-	var effect_str: String = option.get("effect", "none")
-	match effect_str:
-		"pierce":
-			data.special_effect = AllyData.SpecialEffect.PIERCE
-			data.pierce_count = 2
-		"slow":
-			data.special_effect = AllyData.SpecialEffect.SLOW
-			data.slow_percent = 0.4
-			data.slow_duration = 2.0
-		"poison":
-			data.special_effect = AllyData.SpecialEffect.POISON
-			data.poison_dps = 3.0
-			data.poison_duration = 3.0
-		"knockback":
-			data.special_effect = AllyData.SpecialEffect.KNOCKBACK
-			data.knockback_force = 150.0
-		"heal":
-			data.special_effect = AllyData.SpecialEffect.HEAL_AURA
-			data.heal_amount = 2.0
-			data.heal_interval = 3.0
-		"explode":
-			data.special_effect = AllyData.SpecialEffect.EXPLODE
-			data.explode_radius = 60.0
-		"chain":
-			data.special_effect = AllyData.SpecialEffect.CHAIN_LIGHTNING
-			data.chain_targets = 3
-		_:
-			data.special_effect = AllyData.SpecialEffect.NONE
-
-	recruit_ally(data)
 
 
 ## --- 输入 ---
@@ -997,11 +1019,11 @@ func _setup_hud() -> void:
 	level_label.text = "Lv.1"
 	hud.add_child(level_label)
 
-	var ally_label := Label.new()
-	ally_label.name = "AllyLabel"
-	ally_label.position = Vector2(16, 56)
-	ally_label.text = "队友: 0"
-	hud.add_child(ally_label)
+	var weapon_label := Label.new()
+	weapon_label.name = "WeaponLabel"
+	weapon_label.position = Vector2(16, 56)
+	weapon_label.text = "武器: 1"
+	hud.add_child(weapon_label)
 
 	var time_label := Label.new()
 	time_label.name = "TimeLabel"
@@ -1046,11 +1068,18 @@ func _setup_hud() -> void:
 	kill_label.text = "击杀: 0"
 	hud.add_child(kill_label)
 
+	# 金币数
+	var coin_label := Label.new()
+	coin_label.name = "CoinLabel"
+	coin_label.position = Vector2(380, 56)
+	coin_label.text = "金币: 0"
+	hud.add_child(coin_label)
+
 	# 暂停按钮
 	var pause_btn := Button.new()
 	pause_btn.name = "PauseButton"
 	pause_btn.text = "||"
-	pause_btn.position = Vector2(420, 56)
+	pause_btn.position = Vector2(420, 76)
 	pause_btn.size = Vector2(40, 40)
 	pause_btn.process_mode = Node.PROCESS_MODE_ALWAYS
 	pause_btn.pressed.connect(_on_pause_pressed)
@@ -1077,9 +1106,10 @@ func _update_hud() -> void:
 	if level_label:
 		level_label.text = "Lv.%d" % player_level
 
-	var ally_label := hud.get_node_or_null("AllyLabel") as Label
-	if ally_label:
-		ally_label.text = "队友: %d" % _allies.size()
+	var weapon_label := hud.get_node_or_null("WeaponLabel") as Label
+	if weapon_label and _player and _player.weapon_manager:
+		var wm: WeaponManager = _player.weapon_manager
+		weapon_label.text = "武器:%d 被动:%d" % [wm.get_weapon_count(), wm.get_passive_count()]
 
 	var time_label := hud.get_node_or_null("TimeLabel") as Label
 	if time_label:
@@ -1096,6 +1126,10 @@ func _update_hud() -> void:
 	var kill_label := hud.get_node_or_null("KillLabel") as Label
 	if kill_label:
 		kill_label.text = "击杀: %d" % kill_count
+
+	var coin_label := hud.get_node_or_null("CoinLabel") as Label
+	if coin_label:
+		coin_label.text = "金币: %d" % coins_collected
 
 	# 大招充能条
 	var ult_bar := hud.get_node_or_null("UltBar") as ColorRect
@@ -1140,13 +1174,13 @@ func _show_victory() -> void:
 	ui_layer.add_child(panel)
 
 	var star_text := "★".repeat(stars) + "☆".repeat(3 - stars)
-	var gold_reward: int = 20 + stars * 10 + GameManager.current_stage * 5
+	var gold_reward: int = 20 + stars * 10 + GameManager.current_stage * 5 + coins_collected
 	var label := Label.new()
-	label.text = "胜利！\n\n%s\n\n击杀: %d\n等级: %d\n队友: %d\n金币: +%d\n\n点击返回" % [
+	label.text = "胜利！\n\n%s\n\n击杀: %d\n等级: %d\n武器: %d\n金币: +%d\n\n点击返回" % [
 		star_text,
 		kill_count,
 		player_level,
-		_allies.size(),
+		_player.weapon_manager.get_weapon_count() if _player and _player.weapon_manager else 0,
 		gold_reward,
 	]
 	label.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
@@ -1192,12 +1226,13 @@ func _show_game_over() -> void:
 	ui_layer.add_child(panel)
 
 	var label := Label.new()
-	label.text = "战败...\n\n存活: %d:%02d\n击杀: %d\n等级: %d\n队友: %d\n\n点击返回" % [
+	label.text = "战败...\n\n存活: %d:%02d\n击杀: %d\n等级: %d\n武器: %d\n金币: %d\n\n点击返回" % [
 		int(elapsed_time) / 60,
 		int(elapsed_time) % 60,
 		kill_count,
 		player_level,
-		_allies.size(),
+		_player.weapon_manager.get_weapon_count() if _player and _player.weapon_manager else 0,
+		coins_collected,
 	]
 	label.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
 	label.vertical_alignment = VERTICAL_ALIGNMENT_CENTER

@@ -56,6 +56,16 @@ var _slow_mult: float = 1.0
 var _poison_timer: float = 0.0
 var _poison_dps: float = 0.0
 
+## 分离力（boids separation）：错帧采样，避免每帧 O(n²)
+var _separation_vec: Vector2 = Vector2.ZERO
+var _separation_timer: float = 0.0
+const SEPARATION_RADIUS: float = 26.0
+const SEPARATION_INTERVAL: float = 0.12
+const SEPARATION_FORCE: float = 0.6
+const SEPARATION_MAX_NEIGHBORS: int = 8
+
+
+
 ## 预加载
 var _exp_gem_scene: PackedScene = preload("res://scenes/battle/pickups/exp_gem.tscn")
 var _damage_number_scene: PackedScene = preload("res://scenes/battle/effects/damage_number.tscn")
@@ -68,6 +78,8 @@ func _ready() -> void:
 		sprite.texture = PlaceholderTexture.outlined_circle(12, Color(0.8, 0.2, 0.2), Color(0.3, 0.0, 0.0))
 		sprite.scale = Vector2(1.0, 1.0)
 		sprite.modulate = Color.WHITE
+	# 错帧相位：分散分离力采样
+	_separation_timer = randf() * SEPARATION_INTERVAL
 
 
 func initialize(data: EnemyData, player: Node2D, difficulty_mult: float = 1.0) -> void:
@@ -136,6 +148,9 @@ func _physics_process(delta: float) -> void:
 		EnemyData.BehaviorType.TANK:
 			_behavior_charge(effective_speed * 0.6)  # 坦克更慢
 
+	# 分离力：避免所有敌人叠在同一点，铺成一片
+	_apply_separation(effective_speed)
+
 	move_and_slide()
 
 	# 碰撞伤害检测
@@ -151,6 +166,37 @@ func _physics_process(delta: float) -> void:
 
 
 ## --- 行为实现 ---
+
+## 分离力：把自己从扎堆的邻居中推开（错帧节流采样）
+func _apply_separation(spd: float) -> void:
+	_separation_timer -= get_physics_process_delta_time()
+	if _separation_timer <= 0.0:
+		_separation_timer = SEPARATION_INTERVAL
+		_separation_vec = _compute_separation()
+	if _separation_vec != Vector2.ZERO:
+		velocity += _separation_vec * spd * SEPARATION_FORCE
+
+
+func _compute_separation() -> Vector2:
+	var push := Vector2.ZERO
+	var count := 0
+	var radius_sq := SEPARATION_RADIUS * SEPARATION_RADIUS
+	var neighbors := get_tree().get_nodes_in_group("enemies")
+	for other in neighbors:
+		if other == self or not is_instance_valid(other):
+			continue
+		var offset: Vector2 = global_position - (other as Node2D).global_position
+		var d_sq := offset.length_squared()
+		if d_sq > 0.01 and d_sq < radius_sq:
+			# 越近推力越大
+			push += offset / d_sq
+			count += 1
+			if count >= SEPARATION_MAX_NEIGHBORS:
+				break
+	if count == 0:
+		return Vector2.ZERO
+	return push.normalized()
+
 
 func _behavior_charge(spd: float) -> void:
 	var direction := global_position.direction_to(player_ref.global_position)
@@ -229,7 +275,8 @@ func _fire_at_player() -> void:
 		proj_sprite.modulate = Color(1.0, 0.3, 0.2, 1.0)
 	# 敌人弹道碰撞层改为打玩家
 	proj.collision_mask = 1  # 玩家层
-	get_tree().current_scene.add_child(proj)
+	# 延迟入树：开火发生在 _physics_process（flush queries）期间
+	get_tree().current_scene.add_child.call_deferred(proj)
 
 
 ## --- 碰撞 ---
@@ -314,10 +361,12 @@ func _die() -> void:
 	# 掉落经验宝石
 	_drop_exp_gems()
 
-	# 通知战斗场景
+	# 通知战斗场景（含金币/回血/宝箱掉落判定）
 	var battle := get_tree().current_scene
 	if battle and battle.has_method("on_enemy_killed"):
 		battle.on_enemy_killed(self, 0)
+	if battle and battle.has_method("roll_enemy_drops"):
+		battle.roll_enemy_drops(global_position, exp_value, _is_split_child)
 
 	# 死亡动画
 	var tween := create_tween()
@@ -349,13 +398,14 @@ func _spawn_split_children() -> void:
 		child.behavior = EnemyData.BehaviorType.CHARGE
 		# 分裂子体更小
 		child.add_to_group("enemies")
-		get_tree().current_scene.get_node("Enemies").add_child(child)
-		# 视觉：更小的红色圆
+		# 视觉：更小的红色圆（入树前设置，避免依赖入树时机）
 		var child_sprite := child.get_node_or_null("Sprite") as Sprite2D
 		if child_sprite:
 			child_sprite.texture = PlaceholderTexture.outlined_circle(8, Color(0.6, 0.15, 0.15), Color(0.2, 0.0, 0.0))
 			child_sprite.scale = Vector2(1.0, 1.0)
 			child_sprite.modulate = Color.WHITE
+		# 延迟入树：死亡可能发生在物理回调（flush queries）期间
+		get_tree().current_scene.get_node("Enemies").add_child.call_deferred(child)
 
 
 func _drop_exp_gems() -> void:
@@ -370,4 +420,4 @@ func _drop_exp_gems() -> void:
 		var gem := _exp_gem_scene.instantiate() as ExpGem
 		gem.exp_value = per_gem
 		gem.global_position = global_position
-		get_tree().current_scene.add_child(gem)
+		get_tree().current_scene.add_child.call_deferred(gem)

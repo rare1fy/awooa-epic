@@ -11,7 +11,6 @@ func _ready() -> void:
 	start_button.pressed.connect(_on_start_pressed)
 	chapter_button.pressed.connect(_on_chapter_pressed)
 	character_button.pressed.connect(_on_character_pressed)
-	_add_siege_prototype_button()
 	start_button.grab_focus()
 	_update_currency_display()
 
@@ -28,21 +27,6 @@ func _on_start_pressed() -> void:
 
 func _on_chapter_pressed() -> void:
 	GameManager.open_chapter_map()
-
-
-func _add_siege_prototype_button() -> void:
-	var container := get_node_or_null("ButtonContainer") as VBoxContainer
-	if not container:
-		return
-	var siege_button := Button.new()
-	siege_button.text = "Siege Prototype"
-	siege_button.custom_minimum_size = Vector2(200, 50)
-	siege_button.pressed.connect(_on_siege_pressed)
-	container.add_child(siege_button)
-
-
-func _on_siege_pressed() -> void:
-	get_tree().change_scene_to_file("res://scenes/battle/battle_siege.tscn")
 
 
 func _on_character_pressed() -> void:

@@ -23,10 +23,12 @@ var input_direction: Vector2 = Vector2.ZERO
 ## 实际生效的移动方向（键盘或摇杆合并后）
 var _active_direction: Vector2 = Vector2.ZERO
 
-## 攻击相关
-var _attack_cooldown: float = 0.0
-var _attack_interval: float = 0.5
-var _projectile_scene: PackedScene = preload("res://scenes/battle/projectiles/projectile.tscn")
+## 武器系统
+var weapon_manager: WeaponManager = null
+## 基础属性（被动加成的基准，不被加成覆盖）
+var base_max_hp: float = 120.0
+var base_speed: float = 180.0
+var pickup_range_mult: float = 1.0
 
 ## 大招
 var _ultimate_active: bool = false
@@ -50,7 +52,15 @@ func _ready() -> void:
 		current_hp = max_hp
 		speed = character_data.base_speed
 		damage = character_data.base_damage
-		_attack_interval = character_data.attack_interval
+
+	base_max_hp = max_hp
+	base_speed = speed
+
+	# 创建武器管理器
+	weapon_manager = WeaponManager.new()
+	weapon_manager.name = "WeaponManager"
+	add_child(weapon_manager)
+	weapon_manager.setup(self)
 
 
 func _physics_process(delta: float) -> void:
@@ -68,12 +78,6 @@ func _physics_process(delta: float) -> void:
 	_active_direction = move_dir
 	_update_animation()
 
-	# 自动攻击
-	_attack_cooldown -= delta
-	if _attack_cooldown <= 0.0:
-		_try_attack()
-		_attack_cooldown = _attack_interval
-
 	# 无敌帧
 	if _invincible_timer > 0.0:
 		_invincible_timer -= delta
@@ -85,25 +89,26 @@ func _physics_process(delta: float) -> void:
 			sprite.modulate = Color.WHITE
 
 
-func _try_attack() -> void:
-	var enemies := get_tree().get_nodes_in_group("enemies")
-	if enemies.is_empty():
+## 获得/升级一把武器或被动
+func acquire_weapon(data: WeaponData) -> void:
+	if weapon_manager:
+		weapon_manager.add_or_upgrade(data)
+	add_ultimate_energy(2.0)
+
+
+## 被动变化时刷新受影响的属性（最大生命/移速/拾取范围）
+func on_passive_changed() -> void:
+	if not weapon_manager:
 		return
-
-	var nearest: Node2D = null
-	var nearest_dist := attack_range
-	for enemy: Node2D in enemies:
-		var dist := global_position.distance_to(enemy.global_position)
-		if dist < nearest_dist:
-			nearest_dist = dist
-			nearest = enemy
-
-	if not nearest:
-		return
-
-	# 发射弹道
-	_fire_projectile(nearest)
-	add_ultimate_energy(3.0)
+	var hp_bonus := weapon_manager.get_passive_value(WeaponData.PassiveType.MAX_HP)
+	var spd_bonus := weapon_manager.get_passive_value(WeaponData.PassiveType.MOVE_SPEED)
+	pickup_range_mult = 1.0 + weapon_manager.get_passive_value(WeaponData.PassiveType.PICKUP_RANGE)
+	var new_max := base_max_hp * (1.0 + hp_bonus)
+	var hp_ratio := current_hp / max_hp if max_hp > 0.0 else 1.0
+	max_hp = new_max
+	current_hp = max_hp * hp_ratio
+	speed = base_speed * (1.0 + spd_bonus)
+	hp_changed.emit(current_hp, max_hp)
 
 
 func _get_keyboard_direction() -> Vector2:
@@ -119,21 +124,6 @@ func _get_keyboard_direction() -> Vector2:
 	if dir != Vector2.ZERO:
 		return dir.normalized()
 	return Vector2.ZERO
-
-
-func _fire_projectile(target: Node2D) -> void:
-	var proj := _projectile_scene.instantiate() as Projectile
-	proj.global_position = global_position
-	proj.direction = global_position.direction_to(target.global_position)
-	proj.damage = damage
-	proj.speed = 450.0
-	proj.max_distance = attack_range + 50.0
-	proj.pierce_count = 0
-	# 弹道颜色跟随主角
-	var proj_sprite := proj.get_node_or_null("Sprite") as Sprite2D
-	if proj_sprite:
-		proj_sprite.modulate = Color(0.4, 0.8, 1.0, 1.0)
-	get_tree().current_scene.add_child(proj)
 
 
 func take_damage(amount: float) -> void:
