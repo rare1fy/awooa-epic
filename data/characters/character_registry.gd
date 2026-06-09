@@ -34,7 +34,7 @@ static func _swordfish() -> Dictionary:
 		"id": &"swordfish",
 		"name": "剑鱼·突刺者",
 		"rarity": 1,
-		"base_hp": 120.0,
+		"base_hp": 100.0,
 		"base_speed": 180.0,
 		"base_damage": 12.0,
 		"attack_interval": 0.5,

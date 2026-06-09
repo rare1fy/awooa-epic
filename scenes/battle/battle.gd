@@ -349,7 +349,7 @@ func _spawn_enemy() -> void:
 	enemy.global_position = spawn_pos
 	enemy.player_ref = _player
 
-	var difficulty_mult := 1.0 + elapsed_time / _stage_duration * 0.5
+	var difficulty_mult := 1.0 + elapsed_time / _stage_duration * 0.85
 
 	# 如果有时间轴解锁的敌人数据，随机选一个
 	var available_entries := _get_available_enemy_entries()
@@ -374,9 +374,9 @@ func _apply_default_enemy_type(enemy: Node2D, difficulty_mult: float) -> void:
 	if elapsed_time < 60.0:
 		# 前 1 分钟：渔村民兵（最弱冲锋兵）
 		data.behavior = EnemyData.BehaviorType.CHARGE
-		data.base_hp = 15.0
-		data.base_damage = 4.0
-		data.speed = 80.0
+		data.base_hp = 24.0
+		data.base_damage = 7.0
+		data.speed = 108.0
 		data.exp_drop = 1
 		data.color = Color(0.7, 0.6, 0.4, 1.0)  # 土黄色布衣
 	elif elapsed_time < 180.0:
@@ -384,17 +384,17 @@ func _apply_default_enemy_type(enemy: Node2D, difficulty_mult: float) -> void:
 		if roll < 0.7:
 			# 暴风城步兵 — 蓝甲冲锋
 			data.behavior = EnemyData.BehaviorType.CHARGE
-			data.base_hp = 22.0
-			data.base_damage = 5.0
-			data.speed = 85.0
+			data.base_hp = 34.0
+			data.base_damage = 8.0
+			data.speed = 112.0
 			data.exp_drop = 1
 			data.color = Color(0.2, 0.3, 0.7, 1.0)  # 暴风城蓝
 		else:
 			# 矮人火枪手 — 环绕走位
 			data.behavior = EnemyData.BehaviorType.CIRCLE
-			data.base_hp = 14.0
-			data.base_damage = 7.0
-			data.speed = 95.0
+			data.base_hp = 22.0
+			data.base_damage = 10.0
+			data.speed = 110.0
 			data.exp_drop = 2
 			data.color = Color(0.6, 0.4, 0.2, 1.0)  # 矮人棕
 	elif elapsed_time < 360.0:
@@ -616,7 +616,7 @@ func _trigger_bat_swarm() -> void:
 	var from_left := randf() < 0.5
 	var side_x := -560.0 if from_left else 560.0
 	var sweep_dir := Vector2(1.0 if from_left else -1.0, 0.0)
-	var difficulty_mult := 1.0 + elapsed_time / _stage_duration * 0.5
+	var difficulty_mult := 1.0 + elapsed_time / _stage_duration * 0.85
 	var bat_count := 14
 	var room := max_enemies - enemy_count
 	bat_count = mini(bat_count, room)
@@ -648,7 +648,7 @@ func _trigger_piranha_encircle() -> void:
 	var enemy_count := enemies_container.get_child_count()
 	if enemy_count >= max_enemies:
 		return
-	var difficulty_mult := 1.0 + elapsed_time / _stage_duration * 0.5
+	var difficulty_mult := 1.0 + elapsed_time / _stage_duration * 0.85
 	var ring_count := 18
 	var room := max_enemies - enemy_count
 	ring_count = mini(ring_count, room)
@@ -756,7 +756,6 @@ func _setup_player() -> void:
 	player_node.add_child(_player)
 	_player.add_to_group("player")
 	_player.died.connect(_on_player_died)
-	_player.hp_changed.connect(_on_player_hp_changed)
 
 	# 应用选中角色数据
 	var char_data: Dictionary = GameManager.get_selected_character_data()
@@ -979,10 +978,6 @@ func _on_player_died() -> void:
 	_show_game_over()
 
 
-func _on_player_hp_changed(_current: float, _max_hp: float) -> void:
-	pass
-
-
 ## --- HUD ---
 
 func _setup_hud() -> void:
@@ -998,20 +993,6 @@ func _setup_hud() -> void:
 		hud_theme.default_font_size = 12
 		hud.theme = hud_theme
 	ui_layer.add_child(hud)
-
-	var hp_bg := ColorRect.new()
-	hp_bg.name = "HPBarBG"
-	hp_bg.position = Vector2(16, 16)
-	hp_bg.size = Vector2(200, 16)
-	hp_bg.color = Color(0.2, 0.2, 0.2, 0.8)
-	hud.add_child(hp_bg)
-
-	var hp_bar := ColorRect.new()
-	hp_bar.name = "HPBar"
-	hp_bar.position = Vector2(16, 16)
-	hp_bar.size = Vector2(200, 16)
-	hp_bar.color = Color(0.2, 0.8, 0.3, 1.0)
-	hud.add_child(hp_bar)
 
 	var level_label := Label.new()
 	level_label.name = "LevelLabel"
@@ -1090,17 +1071,6 @@ func _update_hud() -> void:
 	var hud := ui_layer.get_node_or_null("HUD")
 	if not hud:
 		return
-
-	var hp_bar := hud.get_node_or_null("HPBar") as ColorRect
-	if hp_bar and _player:
-		var ratio: float = _player.current_hp / _player.max_hp
-		hp_bar.size.x = 200.0 * ratio
-		if ratio < 0.3:
-			hp_bar.color = Color(0.9, 0.2, 0.2, 1.0)
-		elif ratio < 0.6:
-			hp_bar.color = Color(0.9, 0.7, 0.2, 1.0)
-		else:
-			hp_bar.color = Color(0.2, 0.8, 0.3, 1.0)
 
 	var level_label := hud.get_node_or_null("LevelLabel") as Label
 	if level_label:

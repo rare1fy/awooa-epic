@@ -43,6 +43,13 @@ const INVINCIBLE_DURATION: float = 0.15
 ## 当前朝向（用于动画）
 var _facing: String = "south"
 
+## 头顶血条（跟随精灵）
+var _hp_bar_bg: ColorRect = null
+var _hp_bar_fill: ColorRect = null
+const HP_BAR_WIDTH: float = 32.0
+const HP_BAR_HEIGHT: float = 4.0
+const HP_BAR_Y_OFFSET: float = -28.0
+
 @onready var sprite: AnimatedSprite2D = $Sprite
 
 
@@ -61,6 +68,44 @@ func _ready() -> void:
 	weapon_manager.name = "WeaponManager"
 	add_child(weapon_manager)
 	weapon_manager.setup(self)
+
+	_create_hp_bar()
+	_update_hp_bar()
+
+
+## 创建跟随精灵的头顶血条
+func _create_hp_bar() -> void:
+	_hp_bar_bg = ColorRect.new()
+	_hp_bar_bg.name = "HpBarBG"
+	_hp_bar_bg.color = Color(0.0, 0.0, 0.0, 0.55)
+	_hp_bar_bg.size = Vector2(HP_BAR_WIDTH, HP_BAR_HEIGHT)
+	_hp_bar_bg.position = Vector2(-HP_BAR_WIDTH * 0.5, HP_BAR_Y_OFFSET)
+	_hp_bar_bg.z_index = 100
+	_hp_bar_bg.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	add_child(_hp_bar_bg)
+
+	_hp_bar_fill = ColorRect.new()
+	_hp_bar_fill.name = "HpBarFill"
+	_hp_bar_fill.color = Color(0.2, 0.85, 0.35, 1.0)
+	_hp_bar_fill.size = Vector2(HP_BAR_WIDTH, HP_BAR_HEIGHT)
+	_hp_bar_fill.position = Vector2.ZERO
+	_hp_bar_fill.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	_hp_bar_bg.add_child(_hp_bar_fill)
+
+
+## 刷新头顶血条宽度与颜色
+func _update_hp_bar() -> void:
+	if not _hp_bar_fill:
+		return
+	var ratio := current_hp / max_hp if max_hp > 0.0 else 0.0
+	ratio = clampf(ratio, 0.0, 1.0)
+	_hp_bar_fill.size.x = HP_BAR_WIDTH * ratio
+	if ratio > 0.5:
+		_hp_bar_fill.color = Color(0.2, 0.85, 0.35, 1.0)
+	elif ratio > 0.25:
+		_hp_bar_fill.color = Color(0.9, 0.7, 0.2, 1.0)
+	else:
+		_hp_bar_fill.color = Color(0.9, 0.2, 0.2, 1.0)
 
 
 func _physics_process(delta: float) -> void:
@@ -109,6 +154,7 @@ func on_passive_changed() -> void:
 	current_hp = max_hp * hp_ratio
 	speed = base_speed * (1.0 + spd_bonus)
 	hp_changed.emit(current_hp, max_hp)
+	_update_hp_bar()
 
 
 func _get_keyboard_direction() -> Vector2:
@@ -135,6 +181,7 @@ func take_damage(amount: float) -> void:
 	current_hp -= amount
 	current_hp = maxf(current_hp, 0.0)
 	hp_changed.emit(current_hp, max_hp)
+	_update_hp_bar()
 
 	# 无敌帧
 	_invincible_timer = INVINCIBLE_DURATION
@@ -150,6 +197,7 @@ func take_damage(amount: float) -> void:
 func heal(amount: float) -> void:
 	current_hp = minf(current_hp + amount, max_hp)
 	hp_changed.emit(current_hp, max_hp)
+	_update_hp_bar()
 
 
 func add_ultimate_energy(amount: float) -> void:
